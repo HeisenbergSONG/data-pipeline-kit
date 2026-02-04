@@ -1,0 +1,62 @@
+[
+  {
+    "image": "course_schedule_list.jpg",
+    "label": {
+      "course_name": "理论Ⅰ",
+      "teacher": "",
+      "location": "研本合上，二教207",
+      "teaching_week": "[{\"start\":2, \"end\":3, \"weekType\": \"连续\"}]",
+      "day": "4",
+      "start_section": "1",
+      "end_section": "4"
+    }
+  },
+  {
+    "image": "course_schedule_list.jpg",
+    "label": {
+      "course_name": "量子多体理论",
+      "teacher": "RYUICHI SHINDO",
+      "location": "研本合上，二教501",
+      "teaching_week": "[{\"start\":1, \"end\":3, \"weekType\": \"连续\"}, {\"start\":5, \"end\":5, \"weekType\": \"连续\"}]",
+      "day": "4",
+      "start_section": "1",
+      "end_section": "4"
+    }
+  },
+  {
+    "image": "course_schedule_list.jpg",
+    "label": {
+      "course_name": "超短超强激光物理与实验基础",
+      "teacher": "马燕云",
+      "location": "研本合上，一教415",
+      "teaching_week": "[{\"start\":7, \"end\":7, \"weekType\": \"连续\"}]",
+      "day": "4",
+      "start_section": "1",
+      "end_section": "3"
+    }
+  },
+  {
+    "image": "course_schedule_list.jpg",
+    "label": {
+      "course_name": "等离子体物理实验基础",
+      "teacher": "李相东",
+      "location": "研本合上，一教411",
+      "teaching_week": "[{\"start\":5, \"end\":5, \"weekType\": \"连续\"}]",
+      "day": "4",
+      "start_section": "1",
+      "end_section": "3"
+    }
+  },
+  {
+    "image": "course_schedule_list.jpg",
+    "label": {
+      "course_name": "量子材料前沿讲座",
+      "teacher": "陈炯",
+      "location": "研本合上，一学的一课，秋季选课，春季录成选，物理西楼363",
+      "teaching_week": "[{\"start\":7, \"end\":7, \"weekType\": \"连续\"}]",
+      "day": "4",
+      "start_section": "1",
+      "end_section": "2"
+    }
+  }
+]
