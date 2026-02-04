@@ -1,0 +1,14 @@
+# 核心依赖（严格匹配脚本使用）
+openai>=1.35.0
+tiktoken>=0.7.0
+datasketch>=1.6.0
+transformers>=4.41.0
+tqdm>=4.66.0
+sentencepiece>=0.2.0
+
+# 可选（推荐安装，提升稳定性）
+numpy>=1.24.0
+pandas>=2.0.0
+
+# 如果使用 Qwen 官方 SDK（备选）
+# dashscope>=1.19.0
