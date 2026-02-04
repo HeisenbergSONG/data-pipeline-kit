@@ -1,0 +1,22 @@
+# 通用
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.vscode/
+.idea/
+.zip/
+
+# 构建和缓存
+node_modules/
+dist/
+build/
+target/
+__pycache__/
+venv/
+.env
+
+# 日志和临时
+*.log
+tmp/
+temp/
