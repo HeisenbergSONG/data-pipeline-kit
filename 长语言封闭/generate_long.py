@@ -10,10 +10,10 @@ from typing import Tuple
 
 # ==================== 配置 ====================
 client = OpenAI(
-    api_key="sk-你的密钥",  # ← 修改此处
+    api_key="sk-",  # ← 修改此处
     base_url="https://dashscope.aliyun.com/compatible-mode/v1"
 )
-MODEL = "qwen-max"
+MODEL = "qwen-long"
 
 tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B-Instruct")
 
