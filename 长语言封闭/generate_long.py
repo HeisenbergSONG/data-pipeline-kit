@@ -98,7 +98,7 @@ def llm_call(prompt: str, temperature: float = 0.7, max_tokens: int = 1500) -> s
             temperature=temperature,
             max_tokens=max_tokens
         )
-        return resp.choices[0].message.content.strip()
+        return resp.choices[0].message.content.strip() # type: ignore
     except Exception as e:
         print(f"LLM Error: {e}")
         return ""
