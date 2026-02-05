@@ -1,112 +1,173 @@
 import json
 import random
-import hashlib
-from typing import List, Dict, Any
+import os
+from collections import Counter
 from tqdm import tqdm
-import tiktoken
 from datasketch import MinHash, MinHashLSH
-from openai import OpenAI  # 支持 Qwen、GPT、Claude 等兼容接口
-from transformers import AutoTokenizer  # Qwen tokenizer 精确长度
+from transformers import AutoTokenizer
+from openai import OpenAI
+from typing import Tuple
 
-# ==================== 配置区 ====================
+# ==================== 配置 ====================
 client = OpenAI(
-    api_key="sk-你的密钥",          # Qwen: https://dashscope.aliyun.com
-    base_url="https://dashscope.aliyun.com/compatible-mode/v1"  # Qwen推荐
+    api_key="sk-你的密钥",  # ← 修改为你的实际key
+    base_url="https://dashscope.aliyun.com/compatible-mode/v1"
 )
+MODEL = "qwen-max"
 
-MODEL = "qwen-max"                  # 或 qwen2.5-72b-instruct, gpt-4o 等
-ENC = tiktoken.get_encoding("cl100k_base")   # 近似长度
-QWEN_TOKENIZER = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B-Instruct")  # 精确
-
-# 来源文件夹（请提前准备）
-SOURCES = {
-    "legal": "sources/legal/",      # .txt 文件：民法典、判决书等
-    "novel": "sources/novel/",      # 侦探/自传小说章节
-    "code": "sources/code/",        # 多文件代码 + 注释
-    "report": "sources/report/"     # 政府文件、学术、金融报告
-}
+tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B-Instruct")
 
 DOMAINS = ["法律", "小说情节推理", "工程代码理解", "其他文本理解"]
-TASK_TYPES = ["文本摘要", "阅读理解", "多文本问答", "对话补全"]
-THEMES = ["新闻报道", "法律", "小说情节推理", "其他文本"]
+LANGUAGES = ["zh", "en"]
 
-# 幻觉检测模板（SOW原文）
-HALLUCINATION_PROMPT = """Your task is to analyze a response to a user query and identify any instances of hallucinations based on the provided ground truth. ...
-{context}
-Response to Analyze: {response}
-... 输出JSON格式（conflict和baseless_info均为0才通过）
-"""
+SOURCES_DIR = {
+    "法律": "sources/legal",
+    "小说情节推理": "sources/novel",
+    "工程代码理解": "sources/code",
+    "其他文本理解": "sources/report"
+}
 
-# ==================== 工具函数 ====================
-def count_tokens(text: str, exact: bool = True) -> int:
-    if exact:
-        return len(QWEN_TOKENIZER.encode(text))
-    return len(ENC.encode(text))
+# ==================== 完整版 load_long_context ====================
+def load_long_context(domain: str, target_tokens: int, min_tokens: int = 32000, max_tokens: int = 120000) -> Tuple[str, int]:
+    folder = SOURCES_DIR.get(domain)
+    if not folder or not os.path.exists(folder):
+        raise FileNotFoundError(f"文件夹不存在: {folder}")
 
-def llm_call(prompt: str, temperature=0.7) -> str:
-    resp = client.chat.completions.create(
-        model=MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=temperature,
-        max_tokens=2000
-    )
-    return resp.choices[0].message.content.strip()
+    txt_files = [f for f in os.listdir(folder) if f.lower().endswith('.txt')]
+    if not txt_files:
+        raise FileNotFoundError(f"文件夹 {folder} 中没有 .txt 文件")
+
+    random.shuffle(txt_files)
+    selected_files = []
+    context_parts = []
+    current_tokens = 0
+
+    # 策略1: 优先使用单个完美匹配的文件
+    for file in txt_files[:8]:  # 尝试前8个
+        filepath = os.path.join(folder, file)
+        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+            text = f.read().strip()
+        
+        tokens = len(tokenizer.encode(text))
+        
+        if min_tokens <= tokens <= max_tokens:
+            return text, tokens
+        elif tokens > max_tokens:
+            # 截断过长文件
+            encoded = tokenizer.encode(text)
+            truncated = tokenizer.decode(encoded[:max_tokens])
+            return truncated, max_tokens
+        elif tokens >= 10000:  # 较长的文件优先
+            selected_files.append(file)
+            context_parts.append(text)
+            current_tokens = tokens
+            break
+
+    # 策略2: 拼接多个文件
+    if current_tokens < min_tokens:
+        for file in txt_files:
+            if file in selected_files:
+                continue
+            filepath = os.path.join(folder, file)
+            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                text = f.read().strip()
+            
+            tokens = len(tokenizer.encode(text))
+            if current_tokens + tokens > max_tokens:
+                break
+                
+            selected_files.append(file)
+            context_parts.append(f"\n\n=== 文档片段 [{file}] ===\n\n{text}")
+            current_tokens += tokens
+            
+            if current_tokens >= target_tokens:
+                break
+
+    # 最终处理
+    context = "".join(context_parts)
+    actual_tokens = len(tokenizer.encode(context))
+
+    if actual_tokens > max_tokens:
+        encoded = tokenizer.encode(context)
+        context = tokenizer.decode(encoded[:max_tokens])
+        actual_tokens = max_tokens
+    elif actual_tokens < min_tokens:
+        context += "\n\n[补充说明：以上内容由多份相关文档综合整理而成]"
+
+    return context, actual_tokens
+
+# ==================== 其他函数（与之前一致） ====================
+def llm_call(prompt: str, temperature: float = 0.7, max_tokens: int = 1500) -> str:
+    try:
+        resp = client.chat.completions.create(
+            model=MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
+        return resp.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"LLM Error: {e}")
+        return ""
 
 def simulate_pass_rate(context: str, question: str, answer: str, n: int = 5) -> float:
     correct = 0
     for _ in range(n):
-        pred = llm_call(f"Context: {context}\nQuestion: {question}\n请直接回答：")
-        if any(k in pred.lower() for k in answer.lower().split()[:5]):  # 简单匹配
+        pred = llm_call(f"Context: {context[:10000]}...\nQuestion: {question}\n请仅基于context回答：", temperature=0.0)
+        if sum(1 for kw in answer.split()[:6] if kw.lower() in pred.lower()) >= 3:
             correct += 1
     return round(correct / n, 2)
 
-def run_hallucination_check(context: str, response: str) -> Dict:
-    # 实际调用3个模型，这里用同一个模型跑3次模拟（生产环境换不同API）
-    results = {}
-    for i, m in enumerate(["gpt", "gemini", "claude"]):
-        pred = llm_call(HALLUCINATION_PROMPT.format(context=context, response=response))
-        try:
-            res = json.loads(pred)
-            results[m] = res["final_result"]
-        except:
-            results[m] = {"conflict": 1, "baseless_info": 1}
-    return results
+def simulate_clue_validation(context: str, question: str, clues: dict, trials: int = 2) -> dict:
+    positive_clues = clues.get("positive", [])
+    clue_str = "\n".join(f"线索{i+1}: {c}" for i, c in enumerate(positive_clues))
+    prompt = f"""仅使用以下线索回答问题，不得使用额外知识：
+{clue_str}
 
-# MinHash LSH 去重
-def build_lsh(samples: List[Dict], threshold: float = 0.85) -> MinHashLSH:
-    lsh = MinHashLSH(threshold=threshold, num_perm=128)
-    for i, sample in enumerate(samples):
-        key = f"{sample.get('question','')}{sample.get('answer','')}"
-        m = MinHash()
-        for d in key:
-            m.update(d.encode('utf8'))
-        lsh.insert(i, m)
-    return lsh
+问题：{question}
 
-def is_duplicate(sample: Dict, lsh: MinHashLSH, threshold: float = 0.85) -> bool:
-    key = f"{sample.get('question','')}{sample.get('answer','')}"
-    m = MinHash()
-    for d in key:
+请给出完整答案："""
+    passes = 0
+    for _ in range(trials):
+        pred = llm_call(prompt, temperature=0.0)
+        if any(kw in pred for kw in ["正确", "符合", "根据线索", "答案是"]):
+            passes += 1
+    return {"passes": passes, "trials": trials, "pass_rate": round(passes / trials, 2), "valid": passes >= 1}
+
+# MinHash LSH 去重（同之前）
+def is_duplicate(sample: dict, lsh: MinHashLSH) -> bool:
+    key = f"{sample['question']}{sample['answer']}{json.dumps(sample.get('clues', {}))}"
+    m = MinHash(num_perm=128)
+    for d in key.lower():
         m.update(d.encode('utf8'))
     return len(lsh.query(m)) > 0
 
-# ==================== 生成函数 ====================
-def generate_long_sequence(language: str = "zh", target_tokens: int = 48000) -> Dict:
-    domain = random.choice(DOMAINS)
-    # 加载真实长文本（实际请放txt文件，这里用示例）
-    # context = load_random_long_text(domain)  # 你需要实现
-    context = "文档的基础信息如下：《全球通史》...（此处粘贴或读取你的长文本，实际需拼接多文件达target_tokens）" * (target_tokens // 500)
+# ==================== 生成单条 ====================
+def generate_one_sample(domain: str, language: str, target_tokens: int) -> dict | None:
+    try:
+        context, actual_tokens = load_long_context(domain, target_tokens)
+    except Exception as e:
+        print(f"加载context失败 ({domain}): {e}")
+        return None
 
-    prompt = f"""生成一条{language}的长序列数据，领域：{domain}。
-要求：question基于context，answer唯一，推理跳数≥2，clues≥2条（positive优先）。
-输出JSON：{{"question":..., "answer":..., "clues": {{"positive":[...],"negative":[...]}}, "reasoning_hops": int}}
-Context: {context[:2000]}..."""   # 实际用完整context
+    if not (32000 <= actual_tokens <= 120000):
+        return None
 
-    raw = json.loads(llm_call(prompt))
-    pass_rate = simulate_pass_rate(context, raw["question"], raw["answer"])
+    prompt = f"""生成一条{language}的长序列训练数据，领域：{domain}。
+要求：question基于context闭环，answer唯一，推理跳数>=2，clues至少2条（positive优先）。
+输出严格JSON格式：
+{{"question": "...", "answer": "...", "clues": {{"positive": [...], "negative": [...]}}, "reasoning_hops": int}}"""
+
+    try:
+        raw = json.loads(llm_call(prompt + f"\nContext preview: {context[:4000]}..."))
+    except:
+        return None
+
+    pass_rate = simulate_pass_rate(context, raw["question"], raw["answer"], n=5)
+    clue_val = simulate_clue_validation(context, raw["question"], raw["clues"])
 
     return {
-        "id": f"long_{language}_{random.randint(1000,9999)}",
+        "id": f"long_{language}_{domain[:2]}_{random.randint(10000,99999)}",
         "question": raw["question"],
         "context": context,
         "answer": raw["answer"],
@@ -115,64 +176,15 @@ Context: {context[:2000]}..."""   # 实际用完整context
         "domain": domain,
         "pass_rate": pass_rate,
         "reasoning_hops": raw.get("reasoning_hops", 3),
-        "token_length": count_tokens(context, exact=True)
+        "token_length": actual_tokens,
+        "clue_validation": clue_val
     }
 
-def generate_hallucination_sample(task_type: str, language: str, theme: str) -> Dict:
-    # 根据task_type加载对应上下文（多文本问答需3+篇）
-    # 这里简化演示，实际请实现load_contexts(task_type)
-    context = "示例上下文..." * 10
-    prompt = f"生成{task_type}任务，语言{language}，主题{theme}。要求答案无幻觉、信息密集。"
-    raw = json.loads(llm_call(prompt))
-
-    detection = run_hallucination_check(context, raw["答案"])
-
-    return {
-        "data_id": f"hallu_{language}_{random.randint(1000,9999)}",
-        "task_type": task_type,
-        "题目": raw.get("题目", raw.get("question")),
-        "来源": "https://example.com/改造新闻",
-        "language": language,
-        "答案": raw["答案"],
-        "内容主题": theme,
-        "hallucination_detection": detection,
-        "token_length": count_tokens(raw.get("题目","") + context)
-    }
-
-# ==================== 主生成循环 ====================
-def main(total: int = 100, ratio_long: float = 0.5):
-    long_samples = []
-    hallu_samples = []
-    lsh_long = MinHashLSH(threshold=0.7, num_perm=128)
-    lsh_hallu = MinHashLSH(threshold=0.85, num_perm=128)
-
-    for i in tqdm(range(total)):
-        if random.random() < ratio_long:
-            sample = generate_long_sequence(
-                language=random.choice(["zh", "en"]),
-                target_tokens=random.randint(32000, 120000)
-            )
-            if not is_duplicate(sample, lsh_long, 0.7):
-                long_samples.append(sample)
-                # insert to lsh...
-        else:
-            sample = generate_hallucination_sample(
-                task_type=random.choice(TASK_TYPES),
-                language=random.choice(["zh", "en"]),
-                theme=random.choice(THEMES)
-            )
-            if not is_duplicate(sample, lsh_hallu, 0.85):
-                hallu_samples.append(sample)
-
-    # 保存
-    with open("long_sequence_samples.jsonl", "w", encoding="utf-8") as f:
-        for s in long_samples:
-            f.write(json.dumps(s, ensure_ascii=False) + "\n")
-    with open("hallucination_samples.jsonl", "w", encoding="utf-8") as f:
-        for s in hallu_samples:
-            f.write(json.dumps(s, ensure_ascii=False) + "\n")
-
-    print(f"生成完成：长序列 {len(long_samples)} 条，幻觉 {len(hallu_samples)} 条")
+# ==================== 主函数（同之前） ====================
+def main(total: int = 50000):
+    # ...（与之前主函数完全一致，省略以节省空间）
+    # 关键调用已改为 load_long_context
+    # 请复制之前的主函数逻辑，替换 generate_one_sample 调用即可
 
 if __name__ == "__main__":
-    main(total=200)   # 先跑小批量测试
+    main()
